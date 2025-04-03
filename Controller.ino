@@ -1,6 +1,43 @@
 #include <Bluepad32.h>
 
+// Failsafe settings
+#define FAILSAFE_TIMEOUT 1000 // 1 second
+
+// Controller Limits
+#define TRIGGER_DEADZONE 10
+#define TRIGGER_MIN 0
+#define TRIGGER_MAX 1023
+#define STICK_DEADZONE 10
+#define STICK_MIN -511
+#define STICK_MAX 512
+
+// Weapon Settings
+#define WPN_MAX_REVERSE -511
+#define WPN_OFF 0
+#define WPN_LOW 128
+#define WPN_MID 256
+#define WPN_HIGH 384
+#define WPN_MAX 512
+
+// Throttle Settings
+#define THROTTLE_MIN -511
+#define THROTTLE_OFF 0
+#define THROTTLE_MAX 512
+
+// Steering Settings
+#define STEER_MIN -511
+#define STEER_OFF 0
+#define STEER_MAX 512
+
+
+// Global variables :)
 ControllerPtr myControllers[BP32_MAX_GAMEPADS];
+
+int weaponSpeed = WPN_OFF;
+int weaponIdleSpeed = WPN_OFF;
+int throttle = THROTTLE_OFF;
+int steer = STEER_OFF;
+
 
 // This callback gets called any time a new gamepad is connected.
 // Up to 4 gamepads can be connected at the same time.
@@ -64,143 +101,40 @@ void dumpGamepad(ControllerPtr ctl) {
     );
 }
 
-void dumpMouse(ControllerPtr ctl) {
-    Serial.printf("idx=%d, buttons: 0x%04x, scrollWheel=0x%04x, delta X: %4d, delta Y: %4d\n",
-                   ctl->index(),        // Controller Index
-                   ctl->buttons(),      // bitmask of pressed buttons
-                   ctl->scrollWheel(),  // Scroll Wheel
-                   ctl->deltaX(),       // (-511 - 512) left X Axis
-                   ctl->deltaY()        // (-511 - 512) left Y axis
-    );
-}
-
-void dumpKeyboard(ControllerPtr ctl) {
-    static const char* key_names[] = {
-        // clang-format off
-        // To avoid having too much noise in this file, only a few keys are mapped to strings.
-        // Starts with "A", which is offset 4.
-        "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V",
-        "W", "X", "Y", "Z", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
-        // Special keys
-        "Enter", "Escape", "Backspace", "Tab", "Spacebar", "Underscore", "Equal", "OpenBracket", "CloseBracket",
-        "Backslash", "Tilde", "SemiColon", "Quote", "GraveAccent", "Comma", "Dot", "Slash", "CapsLock",
-        // Function keys
-        "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
-        // Cursors and others
-        "PrintScreen", "ScrollLock", "Pause", "Insert", "Home", "PageUp", "Delete", "End", "PageDown",
-        "RightArrow", "LeftArrow", "DownArrow", "UpArrow",
-        // clang-format on
-    };
-    static const char* modifier_names[] = {
-        // clang-format off
-        // From 0xe0 to 0xe7
-        "Left Control", "Left Shift", "Left Alt", "Left Meta",
-        "Right Control", "Right Shift", "Right Alt", "Right Meta",
-        // clang-format on
-    };
-    Serial.printf("idx=%d, Pressed keys: ", ctl->index());
-    for (int key = Keyboard_A; key <= Keyboard_UpArrow; key++) {
-        if (ctl->isKeyPressed(static_cast<KeyboardKey>(key))) {
-            const char* keyName = key_names[key-4];
-            Serial.printf("%s,", keyName);
-       }
-    }
-    for (int key = Keyboard_LeftControl; key <= Keyboard_RightMeta; key++) {
-        if (ctl->isKeyPressed(static_cast<KeyboardKey>(key))) {
-            const char* keyName = modifier_names[key-0xe0];
-            Serial.printf("%s,", keyName);
-        }
-    }
-    Console.printf("\n");
-}
-
-void dumpBalanceBoard(ControllerPtr ctl) {
-    Serial.printf("idx=%d,  TL=%u, TR=%u, BL=%u, BR=%u, temperature=%d\n",
-                   ctl->index(),        // Controller Index
-                   ctl->topLeft(),      // top-left scale
-                   ctl->topRight(),     // top-right scale
-                   ctl->bottomLeft(),   // bottom-left scale
-                   ctl->bottomRight(),  // bottom-right scale
-                   ctl->temperature()   // temperature: used to adjust the scale value's precision
-    );
-}
-
 void processGamepad(ControllerPtr ctl) {
-    // There are different ways to query whether a button is pressed.
-    // By query each button individually:
-    //  a(), b(), x(), y(), l1(), etc...
-    int pwm = 255;
-
-    if(ctl->axisX() >= -10 && ctl->axisX() < 11){
-      analogWrite(5, pwm);
-      analogWrite(6, pwm);
-    }else if(ctl->axisX() > 11){
-      analogWrite(6, pwm);
-      pwm = ctl->axisX() / 2.0 - 1;
-      analogWrite(5, 255 - pwm);
-    }else if(ctl->axisX() < -10){
-      analogWrite(5, pwm);
-      pwm = abs(ctl->axisX() / 2.0);
-      analogWrite(6, 255 - pwm);
-    }
-    //ctl->axisX(),        // (-511 - 512) left X Axis
-    //ctl->axisY(),        // (-511 - 512) left Y axis
-    //ctl->axisRX(),       // (-511 - 512) right X axis
-    //ctl->axisRY(),       // (-511 - 512) right Y axis
-
-    // Another way to query controller data is by getting the buttons() function.
-    // See how the different "dump*" functions dump the Controller info.
-    //dumpGamepad(ctl);
-}
-
-void processMouse(ControllerPtr ctl) {
-    // This is just an example.
-    if (ctl->scrollWheel() > 0) {
-        // Do Something
-    } else if (ctl->scrollWheel() < 0) {
-        // Do something else
+    // Select weapon idle speed. B=off, A=low, X=mid, Y=max
+    if (ctl->b()) {
+        weaponIdleSpeed = WPN_OFF;
+    } else if (ctl->a()) {
+        weaponIdleSpeed = WPN_LOW;
+    } else if (ctl->x()) {
+        weaponIdleSpeed = WPN_MID;
+    } else if (ctl->y()) {
+        weaponIdleSpeed = WPN_MAX;
     }
 
-    // See "dumpMouse" for possible things to query.
-    dumpMouse(ctl);
-}
-
-void processKeyboard(ControllerPtr ctl) {
-    if (!ctl->isAnyKeyPressed())
-        return;
-
-    // This is just an example.
-    if (ctl->isKeyPressed(Keyboard_A)) {
-        // Do Something
-        Serial.println("Key 'A' pressed");
+    // Set weapon speed
+    if (ctl->r1()) {
+        weaponSpeed = WPN_MAX; // Full forward weapon
+    } else if (ctl->l1()) {
+        weaponSpeed = WPN_MAX_REVERSE; // Full reverse weapon
+    } else {
+        weaponSpeed = weaponIdleSpeed; // No weapon
     }
 
-    // Don't do "else" here.
-    // Multiple keys can be pressed at the same time.
-    if (ctl->isKeyPressed(Keyboard_LeftShift)) {
-        // Do something else
-        Serial.println("Key 'LEFT SHIFT' pressed");
+    // Set throttle
+    if (abs(ctl->throttle()()) > TRIGGER_DEADZONE) {
+        throttle = map(ctl->throttle(), TRIGGER_MIN, TRIGGER_MAX, THROTTLE_MIN, THROTTLE_MAX);
+    } else {
+        throttle = THROTTLE_OFF;
     }
 
-    // Don't do "else" here.
-    // Multiple keys can be pressed at the same time.
-    if (ctl->isKeyPressed(Keyboard_LeftArrow)) {
-        // Do something else
-        Serial.println("Key 'Left Arrow' pressed");
+    // Set steering
+    if (abs(ctl->axisX()) > STICK_DEADZONE) {
+        steer = map(ctl->axisX(), STICK_MIN, STICK_MAX, STEER_MIN, STEER_MAX);
+    } else {
+        steer = STEER_OFF;
     }
-
-    // See "dumpKeyboard" for possible things to query.
-    dumpKeyboard(ctl);
-}
-
-void processBalanceBoard(ControllerPtr ctl) {
-    // This is just an example.
-    if (ctl->topLeft() > 10000) {
-        // Do Something
-    }
-
-    // See "dumpBalanceBoard" for possible things to query.
-    dumpBalanceBoard(ctl);
 }
 
 void processControllers() {
@@ -208,12 +142,6 @@ void processControllers() {
         if (myController && myController->isConnected() && myController->hasData()) {
             if (myController->isGamepad()) {
                 processGamepad(myController);
-            } else if (myController->isMouse()) {
-                processMouse(myController);
-            } else if (myController->isKeyboard()) {
-                processKeyboard(myController);
-            } else if (myController->isBalanceBoard()) {
-                processBalanceBoard(myController);
             } else {
                 Serial.println("Unsupported controller");
             }
@@ -221,7 +149,6 @@ void processControllers() {
     }
 }
 
-// Arduino setup function. Runs in CPU 1
 void setup() {
     Serial.begin(9600);
     Serial.printf("Firmware: %s\n", BP32.firmwareVersion());
@@ -231,25 +158,12 @@ void setup() {
     // Setup the Bluepad32 callbacks
     BP32.setup(&onConnectedController, &onDisconnectedController);
 
-    // "forgetBluetoothKeys()" should be called when the user performs
-    // a "device factory reset", or similar.
-    // Calling "forgetBluetoothKeys" in setup() just as an example.
     // Forgetting Bluetooth keys prevents "paired" gamepads to reconnect.
     // But it might also fix some connection / re-connection issues.
-    BP32.forgetBluetoothKeys();
-
-    // Enables mouse / touchpad support for gamepads that support them.
-    // When enabled, controllers like DualSense and DualShock4 generate two connected devices:
-    // - First one: the gamepad
-    // - Second one, which is a "virtual device", is a mouse.
-    // By default, it is disabled.
-    BP32.enableVirtualDevice(false);
+    // BP32.forgetBluetoothKeys(); // Uncomment to rebind all gamepads.
 }
 
-// Arduino loop function. Runs in CPU 1.
 void loop() {
-    // This call fetches all the controllers' data.
-    // Call this function in your main loop.
     bool dataUpdated = BP32.update();
     if (dataUpdated)
         processControllers();
