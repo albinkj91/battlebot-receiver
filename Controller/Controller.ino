@@ -34,6 +34,9 @@
 #define STICK_MAX 65534
 #define STICK_DEADZONE 4096
 
+#define BLACK_GAMEPAD_MAC "6c:e6:55:65:eb:02"
+#define PINK_GAMEPAD_MAC "00:00:00:00:00:00"
+
 #define PWM_MIN 1000
 #define PWM_MID 1500
 #define PWM_MAX 2000
@@ -55,12 +58,18 @@
 #define STEER_OFF 127
 #define STEER_MAX 255
 
+// Robot states
+#define COMBAT_MODE 0
+#define PAIRING_MODE 1
+#define FLASHING_MODE 2
 
 // Global variables :)
 int weaponSpeed = WPN_OFF;
 int weaponIdleSpeed = WPN_OFF;
 int throttle = THROTTLE_OFF;
 int steer = STEER_OFF;
+
+int mode = PAIRING_MODE;
 
 Servo lDriveESC;
 Servo rDriveESC;
@@ -144,10 +153,22 @@ void applyPWM() {
 
 void enterFailsafe() {
     Serial.println("ENTERING FAILSAFE!");
+
     lDriveESC.writeMicroseconds(PWM_MID);
     rDriveESC.writeMicroseconds(PWM_MID);
     wpnESC.writeMicroseconds(PWM_MID);
-    myCodeCell.LED(255, 0, 0);
+
+    mode = PAIRING_MODE;
+}
+
+void updateLED() {
+    if (mode == COMBAT_MODE) {
+        myCodeCell.LED(0, 255, 255);    // Cyan
+    } else if (mode == PAIRING_MODE) {
+        myCodeCell.LED(255, 0, 0);      // Red
+    } else if (mode == FLASHING_MODE) {
+        myCodeCell.LED(0, 255, 0);      // Green
+    }
 }
 
 void setup() {
@@ -166,12 +187,13 @@ void setup() {
 
 void loop() {
     ctl.onLoop();
+    updateLED();
     if (ctl.isConnected()) {
         if (ctl.isWaitingForFirstNotification()) {
             Serial.println("waiting for first notification");
+            mode = COMBAT_MODE;
         } else {
             // Run code here
-            myCodeCell.LED(0, 255, 255);
             dumpGamepad();
             processGamepad();
             applyPWM();
@@ -179,6 +201,8 @@ void loop() {
     } else {
         enterFailsafe();
         Serial.println("not connected");
+
+        // Restart ESP to re-pair
         if (ctl.getCountFailedConnection() > 2) {
             ESP.restart();
         }
