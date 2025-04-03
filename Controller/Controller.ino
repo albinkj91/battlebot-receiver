@@ -1,10 +1,11 @@
-//#include <Bluepad32.h>
 #include <XboxSeriesXControllerESP32_asukiaaa.hpp>
+#include <ESP32Servo.h>
+#include <CodeCell.h>
 
 // Define pins
-#define L_DRIVE_PIN 7
-#define R_DRIVE_PIN 8
-#define WPN_PIN 6
+#define L_DRIVE_PIN 5
+#define R_DRIVE_PIN 6
+#define WPN_PIN 7
 
 // Failsafe settings
 #define FAILSAFE_TIMEOUT 1000 // 1 second
@@ -33,6 +34,10 @@
 #define STICK_MAX 65534
 #define STICK_DEADZONE 4096
 
+#define PWM_MIN 1000
+#define PWM_MID 1500
+#define PWM_MAX 2000
+
 // Weapon Settings
 #define WPN_MIN 0   // Full speed in reverse
 #define WPN_OFF 127 // Turn off weapon
@@ -56,6 +61,12 @@ int weaponSpeed = WPN_OFF;
 int weaponIdleSpeed = WPN_OFF;
 int throttle = THROTTLE_OFF;
 int steer = STEER_OFF;
+
+Servo lDriveESC;
+Servo rDriveESC;
+Servo wpnESC;
+
+CodeCell myCodeCell;
 
 XboxSeriesXControllerESP32_asukiaaa::Core ctl;
 
@@ -108,27 +119,35 @@ void processGamepad() {
 
 void applyPWM() {
 
+    // Map throttle and steering to PWM values
     float mix_L = (throttle) - (steer-STEER_OFF);
     float mix_R = (throttle) + (steer-STEER_OFF);
 
-    int leftPWM = constrain(map(mix_L, THROTTLE_MIN, THROTTLE_MAX, 0, 255), 0, 255);
-    int rightPWM = constrain(map(mix_R, THROTTLE_MIN, THROTTLE_MAX, 0, 255), 0, 255);
-    int weaponPWM = constrain(map(weaponSpeed, WPN_MIN, WPN_MAX, 0, 255), 0, 255);
+    int leftPWM = map(mix_L, THROTTLE_MIN, THROTTLE_MAX, PWM_MIN, PWM_MAX);
+    int rightPWM = map(mix_R, THROTTLE_MIN, THROTTLE_MAX, PWM_MIN, PWM_MAX);
+    int weaponPWM = map(weaponSpeed, WPN_MIN, WPN_MAX, PWM_MIN, PWM_MAX);
 
-    analogWrite(L_DRIVE_PIN, leftPWM);
-    analogWrite(R_DRIVE_PIN, rightPWM);
-    analogWrite(WPN_PIN, weaponPWM);
-    
+    // Contrain PWM values
+    leftPWM = constrain(leftPWM, PWM_MIN, PWM_MAX);
+    rightPWM = constrain(rightPWM, PWM_MIN, PWM_MAX);
+    weaponPWM = constrain(weaponPWM, PWM_MIN, PWM_MAX);
+
+    // Write PWM values to ESCs
+    lDriveESC.writeMicroseconds(leftPWM);
+    rDriveESC.writeMicroseconds(rightPWM);
+    wpnESC.writeMicroseconds(weaponPWM);
+
     Serial.println("leftPWM: " + String(leftPWM));
     Serial.println("rightPWM: " + String(rightPWM));
     Serial.println("WeaponPWM: " + String(weaponPWM));
 }
 
 void enterFailsafe() {
-  Serial.println("ENTERING FAILSAFE!");
-  analogWrite(L_DRIVE_PIN, 127);
-  analogWrite(R_DRIVE_PIN, 127);
-  analogWrite(WPN_PIN, 127);
+    Serial.println("ENTERING FAILSAFE!");
+    lDriveESC.writeMicroseconds(PWM_MID);
+    rDriveESC.writeMicroseconds(PWM_MID);
+    wpnESC.writeMicroseconds(PWM_MID);
+    myCodeCell.LED(255, 0, 0);
 }
 
 void setup() {
@@ -137,9 +156,12 @@ void setup() {
 
     ctl.begin();
 
-    pinMode(L_DRIVE_PIN, OUTPUT);
-    pinMode(R_DRIVE_PIN, OUTPUT);
-    pinMode(WPN_PIN, OUTPUT);
+    myCodeCell.Init(MOTION_ROTATION);
+    myCodeCell.LED(255, 255, 255);
+
+    lDriveESC.attach(L_DRIVE_PIN, PWM_MIN, PWM_MAX);
+    rDriveESC.attach(R_DRIVE_PIN, PWM_MIN, PWM_MAX);
+    wpnESC.attach(WPN_PIN, PWM_MIN, PWM_MAX);
 }
 
 void loop() {
@@ -149,6 +171,7 @@ void loop() {
             Serial.println("waiting for first notification");
         } else {
             // Run code here
+            myCodeCell.LED(0, 255, 255);
             dumpGamepad();
             processGamepad();
             applyPWM();
@@ -163,5 +186,5 @@ void loop() {
     Serial.println("at " + String(millis()));
 
     //     vTaskDelay(1);
-    delay(150);
+    delay(10);
 }
