@@ -35,9 +35,6 @@
 #define STICK_MAX 65534
 #define STICK_DEADZONE 4096
 
-#define BLACK_GAMEPAD_MAC "6c:e6:55:65:eb:02"
-#define PINK_GAMEPAD_MAC "00:00:00:00:00:00"
-
 #define PWM_MIN 1000
 #define PWM_MID 1500
 #define PWM_MAX 2000
@@ -64,14 +61,19 @@
 #define PAIRING_MODE 1
 #define FLASHING_MODE 2
 
+// Tuning
+#define DRIVE_SPEED_MODIFIER 1.0    // [0, 1]
+#define TURN_SPEED_MODIFIER 0.5     // [0, 1]
+#define UPDATE_DELAY 10             // Unit: ms
+
 // Global variables :)
 int weaponSpeed = WPN_OFF;
 int weaponIdleSpeed = WPN_OFF;
 int throttle = THROTTLE_OFF;
 int steer = STEER_OFF;
-bool flashMode = false;
+bool share_press_handled = false;
 
-int mode = PAIRING_MODE;
+int mode;
 
 Servo lDriveESC;
 Servo rDriveESC;
@@ -125,14 +127,27 @@ void processGamepad() {
         steer = STEER_OFF;
     }
 
-    Serial.println("Throttle: " + String(throttle) + ", Steer: " + String(steer) + ", Weapon: " + String(weaponSpeed));
+    // Flash mode toggle
+    if (ctl.btnShare) {
+        if (!share_press_handled) {
+            if (mode != FLASHING_MODE) {
+                setMode(FLASHING_MODE);
+            } else {
+                setMode(COMBAT_MODE);
+            }
+        }
+        share_press_handled = true;
+    } else {
+        share_press_handled = false;
+    }
+
+    Serial.println("(INPUT) Throttle: " + String(throttle) + ", Steer: " + String(steer) + ", Weapon: " + String(weaponSpeed));
 }
 
 void applyPWM() {
-
     // Map throttle and steering to PWM values
-    float mix_L = (throttle) - (steer-STEER_OFF);
-    float mix_R = (throttle) + (steer-STEER_OFF);
+    float mix_L = DRIVE_SPEED_MODIFIER*throttle - TURN_SPEED_MODIFIER*(steer-STEER_OFF);
+    float mix_R = DRIVE_SPEED_MODIFIER*throttle + TURN_SPEED_MODIFIER*(steer-STEER_OFF);
 
     int leftPWM = map(mix_L, THROTTLE_MIN, THROTTLE_MAX, PWM_MIN, PWM_MAX);
     int rightPWM = map(mix_R, THROTTLE_MIN, THROTTLE_MAX, PWM_MIN, PWM_MAX);
@@ -148,127 +163,82 @@ void applyPWM() {
     rDriveESC.writeMicroseconds(rightPWM);
     wpnESC.writeMicroseconds(weaponPWM);
 
-    Serial.println("leftPWM: " + String(leftPWM));
-    Serial.println("rightPWM: " + String(rightPWM));
-    Serial.println("WeaponPWM: " + String(weaponPWM));
+    Serial.println("(OUTPUT) leftPWM: " + String(leftPWM) + ", rightPWM: " + String(rightPWM) + ", weaponPWM: " + String(weaponPWM));
 }
 
-void enterFailsafe() {
-    Serial.println("ENTERING FAILSAFE!");
+void setMode(int newMode) {
+    if (mode == newMode) {
+      return;
+    }
 
-    lDriveESC.writeMicroseconds(PWM_MID);
-    rDriveESC.writeMicroseconds(PWM_MID);
-    wpnESC.writeMicroseconds(PWM_MID);
-
-    mode = PAIRING_MODE;
-}
-
-void updateLED() {
+    mode = newMode;
     if (mode == COMBAT_MODE) {
+        Serial.println("Entered combat mode");
         myCodeCell.LED(0, 255, 255);    // Cyan
+
+        // Attach "servos"
+        lDriveESC.attach(L_DRIVE_PIN, PWM_MIN, PWM_MAX);
+        rDriveESC.attach(R_DRIVE_PIN, PWM_MIN, PWM_MAX);
+        wpnESC.attach(WPN_PIN, PWM_MIN, PWM_MAX);
     } else if (mode == PAIRING_MODE) {
+        Serial.println("Entered pairing mode");
         myCodeCell.LED(255, 0, 0);      // Red
+
+        // Stop all motors
+        lDriveESC.writeMicroseconds(PWM_MID);
+        rDriveESC.writeMicroseconds(PWM_MID);
+        wpnESC.writeMicroseconds(PWM_MID);
     } else if (mode == FLASHING_MODE) {
+        Serial.println("Entered flashing mode");
         myCodeCell.LED(0, 255, 0);      // Green
-    }
-}
 
-bool prev_status = flashMode;
-void updateMode() {
-  bool status = ctl.btnShare;
-  if (prev_status == false && status == true)
-  {
-    if (!flashMode)
-    {
-      // Enter flashMode
-      Serial.println("Entering flash mode");
-      flashMode = true;
-      lDriveESC.detach();
-      rDriveESC.detach();
-      wpnESC.detach();
+        // Detach "servos"
+        lDriveESC.detach();
+        rDriveESC.detach();
+        wpnESC.detach();
 
-      pinMode(L_DRIVE_PIN, INPUT);
-      pinMode(R_DRIVE_PIN, INPUT);
-      pinMode(WPN_PIN, INPUT);
+        // Set pins to input
+        pinMode(L_DRIVE_PIN, INPUT);
+        pinMode(R_DRIVE_PIN, INPUT);
+        pinMode(WPN_PIN, INPUT);
     } else {
-      // Exit flashMode
-      Serial.println("Exiting flash mode.");
-      flashMode = false;
-      lDriveESC.attach(L_DRIVE_PIN, PWM_MIN, PWM_MAX);
-      rDriveESC.attach(R_DRIVE_PIN, PWM_MIN, PWM_MAX);
-      wpnESC.attach(WPN_PIN, PWM_MIN, PWM_MAX);
+        Serial.println("Unknown mode! Defaulting to combat mode...");
+        setMode(COMBAT_MODE);
     }
-  }
-  prev_status = status;
-}
-
-bool prev_status = flashMode;
-void updateMode() {
-  bool status = ctl.btnShare;
-  if (prev_status == false && status == true)
-  {
-    if (!flashMode)
-    {
-      // Enter flashMode
-      Serial.println("Entering flash mode");
-      flashMode = true;
-      lDriveESC.detach();
-      rDriveESC.detach();
-      wpnESC.detach();
-
-      pinMode(L_DRIVE_PIN, INPUT);
-      pinMode(R_DRIVE_PIN, INPUT);
-      pinMode(WPN_PIN, INPUT);
-    } else {
-      // Exit flashMode
-      Serial.println("Exiting flash mode.");
-      flashMode = false;
-      lDriveESC.attach(L_DRIVE_PIN, PWM_MIN, PWM_MAX);
-      rDriveESC.attach(R_DRIVE_PIN, PWM_MIN, PWM_MAX);
-      wpnESC.attach(WPN_PIN, PWM_MIN, PWM_MAX);
-    }
-  }
-  prev_status = status;
 }
 
 void setup() {
     Serial.begin(115200);
     Serial.println("Starting NimBLE Client");
-
     ctl.begin();
 
     myCodeCell.Init(MOTION_ROTATION);
     myCodeCell.LED(255, 255, 255);
 
-    lDriveESC.attach(L_DRIVE_PIN, PWM_MIN, PWM_MAX);
-    rDriveESC.attach(R_DRIVE_PIN, PWM_MIN, PWM_MAX);
-    wpnESC.attach(WPN_PIN, PWM_MIN, PWM_MAX);
+    setMode(PAIRING_MODE);
 }
 
 void loop() {
     ctl.onLoop();
-    updateLED();
     if (ctl.isConnected()) {
         if (ctl.isWaitingForFirstNotification()) {
             Serial.println("waiting for first notification");
-            mode = COMBAT_MODE;
         } else {
-
             // Check whether in flash or control mode
-            updateMode();
+            dumpGamepad();
+            processGamepad();
 
-            if (!flashMode) {
-              myCodeCell.LED(0, 255, 255);
-              dumpGamepad();
-              processGamepad();
-              applyPWM();
-            } else {
-              myCodeCell.LED(0, 255, 0);
+            if (mode != FLASHING_MODE) {
+                setMode(COMBAT_MODE);
+            }
+
+            if (mode == COMBAT_MODE) {
+                applyPWM();
             }
         }
     } else {
-        enterFailsafe();
         Serial.println("not connected");
+        setMode(PAIRING_MODE);
 
         // Restart ESP to re-pair
         if (ctl.getCountFailedConnection() > 2) {
@@ -277,6 +247,5 @@ void loop() {
     }
     Serial.println("at " + String(millis()));
 
-    //     vTaskDelay(1);
-    delay(10);
+    delay(UPDATE_DELAY);
 }
