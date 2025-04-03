@@ -22,6 +22,7 @@
 #define axisY xboxNotif.joyLVert
 #define axisRX xboxNotif.joyRHori
 #define axisRY xboxNotif.joyRVert
+#define btnShare xboxNotif.btnShare
 // Define more buttons here if needed...
 
 // Controller Limits
@@ -56,6 +57,7 @@ int weaponSpeed = WPN_OFF;
 int weaponIdleSpeed = WPN_OFF;
 int throttle = THROTTLE_OFF;
 int steer = STEER_OFF;
+bool flashMode = false;
 
 XboxSeriesXControllerESP32_asukiaaa::Core ctl;
 
@@ -131,6 +133,31 @@ void enterFailsafe() {
   analogWrite(WPN_PIN, 127);
 }
 
+bool prev_status = flashMode;
+void updateMode() {
+  bool status = ctl.btnShare;
+  if (prev_status == false && status == true)
+  {
+    if (!flashMode)
+    {
+      // Enter flashMode
+      Serial.println("Entering flash mode");
+      flashMode = true;
+      pinMode(L_DRIVE_PIN, INPUT);
+      pinMode(R_DRIVE_PIN, INPUT);
+      pinMode(WPN_PIN, INPUT);
+    } else {
+      // Exit flashMode
+      Serial.println("Exiting flash mode.");
+      flashMode = false;
+      pinMode(L_DRIVE_PIN, OUTPUT);
+      pinMode(R_DRIVE_PIN, OUTPUT);
+      pinMode(WPN_PIN, OUTPUT);
+    }
+  }
+  prev_status = status;
+}
+
 void setup() {
     Serial.begin(115200);
     Serial.println("Starting NimBLE Client");
@@ -148,10 +175,15 @@ void loop() {
         if (ctl.isWaitingForFirstNotification()) {
             Serial.println("waiting for first notification");
         } else {
-            // Run code here
-            dumpGamepad();
-            processGamepad();
-            applyPWM();
+
+            // Check whether in flash or control mode
+            updateMode();
+
+            if (!flashMode) {
+              dumpGamepad();
+              processGamepad();
+              applyPWM();
+            }
         }
     } else {
         enterFailsafe();
