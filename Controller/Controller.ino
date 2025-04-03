@@ -23,6 +23,7 @@
 #define axisY xboxNotif.joyLVert
 #define axisRX xboxNotif.joyRHori
 #define axisRY xboxNotif.joyRVert
+#define btnShare xboxNotif.btnShare
 // Define more buttons here if needed...
 
 // Controller Limits
@@ -68,6 +69,7 @@ int weaponSpeed = WPN_OFF;
 int weaponIdleSpeed = WPN_OFF;
 int throttle = THROTTLE_OFF;
 int steer = STEER_OFF;
+bool flashMode = false;
 
 int mode = PAIRING_MODE;
 
@@ -171,6 +173,64 @@ void updateLED() {
     }
 }
 
+bool prev_status = flashMode;
+void updateMode() {
+  bool status = ctl.btnShare;
+  if (prev_status == false && status == true)
+  {
+    if (!flashMode)
+    {
+      // Enter flashMode
+      Serial.println("Entering flash mode");
+      flashMode = true;
+      lDriveESC.detach();
+      rDriveESC.detach();
+      wpnESC.detach();
+
+      pinMode(L_DRIVE_PIN, INPUT);
+      pinMode(R_DRIVE_PIN, INPUT);
+      pinMode(WPN_PIN, INPUT);
+    } else {
+      // Exit flashMode
+      Serial.println("Exiting flash mode.");
+      flashMode = false;
+      lDriveESC.attach(L_DRIVE_PIN, PWM_MIN, PWM_MAX);
+      rDriveESC.attach(R_DRIVE_PIN, PWM_MIN, PWM_MAX);
+      wpnESC.attach(WPN_PIN, PWM_MIN, PWM_MAX);
+    }
+  }
+  prev_status = status;
+}
+
+bool prev_status = flashMode;
+void updateMode() {
+  bool status = ctl.btnShare;
+  if (prev_status == false && status == true)
+  {
+    if (!flashMode)
+    {
+      // Enter flashMode
+      Serial.println("Entering flash mode");
+      flashMode = true;
+      lDriveESC.detach();
+      rDriveESC.detach();
+      wpnESC.detach();
+
+      pinMode(L_DRIVE_PIN, INPUT);
+      pinMode(R_DRIVE_PIN, INPUT);
+      pinMode(WPN_PIN, INPUT);
+    } else {
+      // Exit flashMode
+      Serial.println("Exiting flash mode.");
+      flashMode = false;
+      lDriveESC.attach(L_DRIVE_PIN, PWM_MIN, PWM_MAX);
+      rDriveESC.attach(R_DRIVE_PIN, PWM_MIN, PWM_MAX);
+      wpnESC.attach(WPN_PIN, PWM_MIN, PWM_MAX);
+    }
+  }
+  prev_status = status;
+}
+
 void setup() {
     Serial.begin(115200);
     Serial.println("Starting NimBLE Client");
@@ -193,10 +253,18 @@ void loop() {
             Serial.println("waiting for first notification");
             mode = COMBAT_MODE;
         } else {
-            // Run code here
-            dumpGamepad();
-            processGamepad();
-            applyPWM();
+
+            // Check whether in flash or control mode
+            updateMode();
+
+            if (!flashMode) {
+              myCodeCell.LED(0, 255, 255);
+              dumpGamepad();
+              processGamepad();
+              applyPWM();
+            } else {
+              myCodeCell.LED(0, 255, 0);
+            }
         }
     } else {
         enterFailsafe();
