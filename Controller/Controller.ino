@@ -47,6 +47,9 @@
 #define STEER_OFF 0.0
 #define STEER_MAX 100.0
 
+#define ROT_RATE_MAX 1.0 // Turn rate in rad/s
+#define ROT_RATE_MIN -1.0
+
 // PWM Settings
 #define PWM_MIN 1000
 #define PWM_MID 1500
@@ -76,6 +79,9 @@ int mode;
 float gyroX = 0.0;    // Unit: rad/s
 float gyroY = 0.0;    // Unit: rad/s
 float gyroZ = 0.0;    // Unit: rad/s, this is the one we are interested in for turning the robot
+
+float mix_L; // Mixed steering for left drive to be converted to PWM
+float mix_R;
 
 
 Servo lDriveESC;
@@ -163,16 +169,28 @@ void processGamepad() {
 }
 
 void readSensors() {
+    myCodeCell.Motion_Read();
     myCodeCell.PrintSensors();
     myCodeCell.Motion_GyroRead(gyroX, gyroY, gyroZ);
     Serial.println("(SENSING) gyroX: " + String(gyroX) + ", gyroY: " + String(gyroY) + ", gyroZ: " + String(gyroZ));
 }
 
-void applyPWM() {
+void assistedMixing() {
     // Map throttle and steering to PWM values
-    float mix_L = DRIVE_SPEED_MODIFIER*throttle - TURN_SPEED_MODIFIER*(steer-STEER_OFF);
-    float mix_R = DRIVE_SPEED_MODIFIER*throttle + TURN_SPEED_MODIFIER*(steer-STEER_OFF);
+    readSensors();
 
+    mix_L = // Regulated mix
+    mix_R = // Regulated mix
+}
+
+void elevonMixing() {
+    // Map throttle and steering to PWM values
+    mix_L = DRIVE_SPEED_MODIFIER*throttle - TURN_SPEED_MODIFIER*(steer-STEER_OFF);
+    mix_R = DRIVE_SPEED_MODIFIER*throttle + TURN_SPEED_MODIFIER*(steer-STEER_OFF);
+
+}
+
+void applyPWM() {
     int leftPWM = map(mix_L, THROTTLE_MIN, THROTTLE_MAX, PWM_MIN, PWM_MAX);
     int rightPWM = map(mix_R, THROTTLE_MIN, THROTTLE_MAX, PWM_MIN, PWM_MAX);
     int weaponPWM = map(weaponSpeed, WPN_MIN, WPN_MAX, PWM_MIN, PWM_MAX);
@@ -180,7 +198,7 @@ void applyPWM() {
     // Constrain PWM values
     leftPWM = constrain(leftPWM, PWM_MIN, PWM_MAX);
     rightPWM = constrain(rightPWM, PWM_MIN, PWM_MAX);
-    weaponPWM = constrain(weaponPWM, PWM_MIN, PWM_MAX);
+    weaponPWM = constrain(weaponPWM, PWM_MIN, PWM_MAX);    
 
     // Write PWM values to ESCs
     lDriveESC.writeMicroseconds(leftPWM);
@@ -269,10 +287,12 @@ void loop() {
 
             if (mode == COMBAT_MODE) {
                 // TODO: Break up into elevonMixing() and applyPWM()
+                elevonMixing();
                 applyPWM();
             } else if (mode == ASSISTED_COMBAT_MODE) {
                 // readSensors();
                 // TODO: Break up into elevonMixing() and applyPWM()
+                assistedMixing();
                 applyPWM();
             }
         }
@@ -285,7 +305,6 @@ void loop() {
             ESP.restart();
         }
     }
-
     delay(UPDATE_DELAY);
 }
 
