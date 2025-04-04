@@ -7,9 +7,6 @@
 #define R_DRIVE_PIN 6
 #define WPN_PIN 7
 
-// Failsafe settings
-#define FAILSAFE_TIMEOUT 1000 // 1 second
-
 // Shorthand for the Xbox controller
 #define A xboxNotif.btnA
 #define B xboxNotif.btnB
@@ -24,42 +21,42 @@
 #define axisRX xboxNotif.joyRHori
 #define axisRY xboxNotif.joyRVert
 #define btnShare xboxNotif.btnShare
+#define btnSelect xboxNotif.btnSelect
+
 // Define more buttons here if needed...
 
 // Controller Limits
 #define TRIGGER_MIN 0
 #define TRIGGER_MAX 1023
-// #define TRIGGER_DEADZONE 16
 #define STICK_MIN 0
 #define STICK_MID 32767
 #define STICK_MAX 65534
 #define STICK_DEADZONE 4096
 
+// Weapon, throttle and steering limits
+#define WPN_MIN -100.0  // Full speed in reverse
+#define WPN_OFF 0.0     // Turn off weapon
+#define WPN_LOW 25.0    // Low speed for maneuveing
+#define WPN_MID 50.0    // Mid speed for max damage
+#define WPN_HIGH 75.0   // High speed for charging
+#define WPN_MAX 100.0   // Full speed for weapon-on-weapon hits
+#define THROTTLE_MIN -100.0
+#define THROTTLE_OFF 0.0
+#define THROTTLE_MAX 100.0
+#define STEER_MIN -100.0
+#define STEER_OFF 0.0
+#define STEER_MAX 100.0
+
+// PWM Settings
 #define PWM_MIN 1000
 #define PWM_MID 1500
 #define PWM_MAX 2000
-
-// Weapon Settings
-#define WPN_MIN 0   // Full speed in reverse
-#define WPN_OFF 127 // Turn off weapon
-#define WPN_LOW 159 // Low speed for maneuveing
-#define WPN_MID 191 // Mid speed for max damage
-#define WPN_MAX 255 // Full speed for weapon-on-weapon hits
-
-// Throttle Settings
-#define THROTTLE_MIN 0
-#define THROTTLE_OFF 127
-#define THROTTLE_MAX 255
-
-// Steering Settings
-#define STEER_MIN 0
-#define STEER_OFF 127
-#define STEER_MAX 255
 
 // Robot states
 #define COMBAT_MODE 0
 #define PAIRING_MODE 1
 #define FLASHING_MODE 2
+#define ASSISTED_COMBAT_MODE 3
 
 // Tuning
 #define DRIVE_SPEED_MODIFIER 1.0    // [0, 1]
@@ -71,16 +68,20 @@ int weaponSpeed = WPN_OFF;
 int weaponIdleSpeed = WPN_OFF;
 int throttle = THROTTLE_OFF;
 int steer = STEER_OFF;
-bool share_press_handled = false;
+
+bool sharePressHandled = false;
+bool selectPressHandled = false;
 
 int mode;
+float gyroX = 0.0;    // Unit: rad/s
+float gyroY = 0.0;    // Unit: rad/s
+float gyroZ = 0.0;    // Unit: rad/s, this is the one we are interested in for turning the robot
 
 Servo lDriveESC;
 Servo rDriveESC;
 Servo wpnESC;
 
 CodeCell myCodeCell;
-
 XboxSeriesXControllerESP32_asukiaaa::Core ctl;
 
 void dumpGamepad() {
@@ -101,8 +102,8 @@ void processGamepad() {
         Serial.println("(X) Weapon Mid");
         weaponIdleSpeed = WPN_MID;
     } else if (ctl.Y) {
-        Serial.println("(Y) Weapon Max");
-        weaponIdleSpeed = WPN_MAX;
+        Serial.println("(Y) Weapon High");
+        weaponIdleSpeed = WPN_HIGH;
     }
 
     // Set weapon speed
@@ -120,7 +121,6 @@ void processGamepad() {
     throttle = map(ctl.R2-ctl.L2, -TRIGGER_MAX, TRIGGER_MAX, THROTTLE_MIN, THROTTLE_MAX);
 
     // Set steering
-    Serial.println("Deadzone check: " + String(ctl.axisX-STEER_OFF));
     if (abs(ctl.axisX-STICK_MID) > STICK_DEADZONE) {
         steer = map(ctl.axisX, STICK_MIN, STICK_MAX, STEER_MIN, STEER_MAX);
     } else {
@@ -129,19 +129,40 @@ void processGamepad() {
 
     // Flash mode toggle
     if (ctl.btnShare) {
-        if (!share_press_handled) {
+        if (!sharePressHandled) {
             if (mode != FLASHING_MODE) {
                 setMode(FLASHING_MODE);
             } else {
                 setMode(COMBAT_MODE);
             }
         }
-        share_press_handled = true;
+        sharePressHandled = true;
     } else {
-        share_press_handled = false;
+        sharePressHandled = false;
     }
 
+    // Assistance toggle
+    if (ctl.btnSelect) {
+        if (!selectPressHandled) {
+            if (mode == COMBAT_MODE) {
+                setMode(ASSISTED_COMBAT_MODE);
+            } else if (mode == ASSISTED_COMBAT_MODE) {
+                setMode(COMBAT_MODE);
+            }
+        }
+        selectPressHandled = true;
+    } else {
+        selectPressHandled = false;
+    }
+
+
     Serial.println("(INPUT) Throttle: " + String(throttle) + ", Steer: " + String(steer) + ", Weapon: " + String(weaponSpeed));
+}
+
+void readSensors() {
+    myCodeCell.PrintSensors();
+    myCodeCell.Motion_GyroRead(gyroX, gyroY, gyroZ);
+    Serial.println("(SENSING) gyroX: " + String(gyroX) + ", gyroY: " + String(gyroY) + ", gyroZ: " + String(gyroZ));
 }
 
 void applyPWM() {
@@ -166,6 +187,25 @@ void applyPWM() {
     Serial.println("(OUTPUT) leftPWM: " + String(leftPWM) + ", rightPWM: " + String(rightPWM) + ", weaponPWM: " + String(weaponPWM));
 }
 
+void attachMotorPins() {
+    // Attach "servos"
+    lDriveESC.attach(L_DRIVE_PIN, PWM_MIN, PWM_MAX);
+    rDriveESC.attach(R_DRIVE_PIN, PWM_MIN, PWM_MAX);
+    wpnESC.attach(WPN_PIN, PWM_MIN, PWM_MAX);
+}
+
+void detachMotorPins() {
+    // Detach "servos"
+    lDriveESC.detach();
+    rDriveESC.detach();
+    wpnESC.detach();
+
+    // Set pins to input
+    pinMode(L_DRIVE_PIN, INPUT);
+    pinMode(R_DRIVE_PIN, INPUT);
+    pinMode(WPN_PIN, INPUT);
+}
+
 void setMode(int newMode) {
     if (mode == newMode) {
       return;
@@ -175,11 +215,11 @@ void setMode(int newMode) {
     if (mode == COMBAT_MODE) {
         Serial.println("Entered combat mode");
         myCodeCell.LED(0, 255, 255);    // Cyan
-
-        // Attach "servos"
-        lDriveESC.attach(L_DRIVE_PIN, PWM_MIN, PWM_MAX);
-        rDriveESC.attach(R_DRIVE_PIN, PWM_MIN, PWM_MAX);
-        wpnESC.attach(WPN_PIN, PWM_MIN, PWM_MAX);
+        attachMotorPins();
+    } else if (mode == ASSISTED_COMBAT_MODE) {
+        Serial.println("Entered assisted combat mode");
+        myCodeCell.LED(255, 0, 255);    // Magenta
+        attachMotorPins();
     } else if (mode == PAIRING_MODE) {
         Serial.println("Entered pairing mode");
         myCodeCell.LED(255, 0, 0);      // Red
@@ -191,19 +231,10 @@ void setMode(int newMode) {
     } else if (mode == FLASHING_MODE) {
         Serial.println("Entered flashing mode");
         myCodeCell.LED(0, 255, 0);      // Green
-
-        // Detach "servos"
-        lDriveESC.detach();
-        rDriveESC.detach();
-        wpnESC.detach();
-
-        // Set pins to input
-        pinMode(L_DRIVE_PIN, INPUT);
-        pinMode(R_DRIVE_PIN, INPUT);
-        pinMode(WPN_PIN, INPUT);
+        detachMotorPins();
     } else {
         Serial.println("Unknown mode! Defaulting to combat mode...");
-        setMode(COMBAT_MODE);
+        setMode(COMBAT_MODE);   // Default to combat mode
     }
 }
 
@@ -212,7 +243,7 @@ void setup() {
     Serial.println("Starting NimBLE Client");
     ctl.begin();
 
-    myCodeCell.Init(MOTION_ROTATION);
+    myCodeCell.Init(MOTION_GYRO);
     myCodeCell.LED(255, 255, 255);
 
     setMode(PAIRING_MODE);
@@ -224,15 +255,20 @@ void loop() {
         if (ctl.isWaitingForFirstNotification()) {
             Serial.println("waiting for first notification");
         } else {
+            if (mode == PAIRING_MODE) {
+                setMode(COMBAT_MODE);
+            }
+
             // Check whether in flash or control mode
             dumpGamepad();
             processGamepad();
 
-            if (mode != FLASHING_MODE) {
-                setMode(COMBAT_MODE);
-            }
-
             if (mode == COMBAT_MODE) {
+                // TODO: Break up into elevonMixing() and applyPWM()
+                applyPWM();
+            } else if (mode == ASSISTED_COMBAT_MODE) {
+                // readSensors();
+                // TODO: Break up into elevonMixing() and applyPWM()
                 applyPWM();
             }
         }
@@ -245,7 +281,12 @@ void loop() {
             ESP.restart();
         }
     }
-    Serial.println("at " + String(millis()));
 
     delay(UPDATE_DELAY);
 }
+
+// TODOS:
+// - Run loop with myCodeCell.Run(UPDATE_FREQUENCY) instead
+//   - Fix LED resetting to blue breathing when using myCodeCell.Run()
+// - Break applyPWM() into elevonMixing()/PIDControl() and applyPWM()
+// - Add gyro stabilization
