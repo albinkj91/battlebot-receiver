@@ -47,9 +47,6 @@
 #define STEER_OFF 0.0
 #define STEER_MAX 100.0
 
-#define ROT_RATE_MAX 1.0 // Turn rate in rad/s
-#define ROT_RATE_MIN -1.0
-
 // PWM Settings
 #define PWM_MIN 1000
 #define PWM_MID 1500
@@ -65,6 +62,11 @@
 #define DRIVE_SPEED_MODIFIER 1.0    // [0, 1]
 #define TURN_SPEED_MODIFIER 0.5     // [0, 1]
 #define UPDATE_DELAY 10             // Unit: ms
+#define K_P 2.0
+#define K_I 0.0
+#define K_D 5.0
+#define ROT_LOCK_THRESHOLD 0.1      // Unit: rad/s
+#define CONTROL_AUTHORITY 100.0     // How much the offset can affect the turning
 
 // Global variables :)
 int weaponSpeed = WPN_OFF;
@@ -80,9 +82,16 @@ float gyroX = 0.0;    // Unit: rad/s
 float gyroY = 0.0;    // Unit: rad/s
 float gyroZ = 0.0;    // Unit: rad/s, this is the one we are interested in for turning the robot
 
+float rotX = 0.0;    // Unit: Degrees
+float rotY = 0.0;    // Unit: Degrees
+float rotZ = 0.0;    // Unit: Degrees, this is the one we are interested in for turning the robot
+
+bool rotLocked = false;
+float tgtRotZ = 0.0;
 float mix_L; // Mixed steering for left drive to be converted to PWM
 float mix_R;
-
+float prevError = 0.0;
+float errorIntegral = 0.0;
 
 Servo lDriveESC;
 Servo rDriveESC;
@@ -170,24 +179,51 @@ void processGamepad() {
 
 void readSensors() {
     myCodeCell.Motion_Read();
-    myCodeCell.PrintSensors();
     myCodeCell.Motion_GyroRead(gyroX, gyroY, gyroZ);
-    Serial.println("(SENSING) gyroX: " + String(gyroX) + ", gyroY: " + String(gyroY) + ", gyroZ: " + String(gyroZ));
+    myCodeCell.Motion_RotationRead(rotX, rotY, rotZ);
+    Serial.print("(SENSING) ");
+    myCodeCell.PrintSensors();
+}
+
+float angleDifference(float angle1, float angle2) {
+    float diff = fmod(angle2 - angle1 + 180, 360) - 180;
+    return (diff < -180) ? diff + 360 : diff; // Ensure the range is [-180, 180]
 }
 
 void assistedMixing() {
     // Map throttle and steering to PWM values
     readSensors();
 
-    mix_L = // Regulated mix
-    mix_R = // Regulated mix
+    // Locking logic
+    if (abs(steer) > 0) {
+        rotLocked = false;
+    } else if (abs(gyroZ) < ROT_LOCK_THRESHOLD) {
+        rotLocked = true;
+        tgtRotZ = rotZ;
+        errorIntegral = 0.0;
+    }
+
+    // Control logic
+    if (rotLocked) {
+      // Reglera
+      float error = angleDifference(tgtRotZ, rotZ);
+      errorIntegral += error;
+      float offset = K_P*error + K_I*errorIntegral + K_D*(error-prevError);  // TODO: Expand to PID?
+      
+      offset = constrain(offset, -CONTROL_AUTHORITY, CONTROL_AUTHORITY);
+      mix_L = throttle - offset;
+      mix_R = throttle + offset;
+      prevError = error;
+    } else {
+      // Gå bara på kontroller-input
+      elevonMixing();
+    }    
 }
 
 void elevonMixing() {
     // Map throttle and steering to PWM values
     mix_L = DRIVE_SPEED_MODIFIER*throttle - TURN_SPEED_MODIFIER*(steer-STEER_OFF);
     mix_R = DRIVE_SPEED_MODIFIER*throttle + TURN_SPEED_MODIFIER*(steer-STEER_OFF);
-
 }
 
 void applyPWM() {
@@ -198,7 +234,7 @@ void applyPWM() {
     // Constrain PWM values
     leftPWM = constrain(leftPWM, PWM_MIN, PWM_MAX);
     rightPWM = constrain(rightPWM, PWM_MIN, PWM_MAX);
-    weaponPWM = constrain(weaponPWM, PWM_MIN, PWM_MAX);    
+    weaponPWM = constrain(weaponPWM, PWM_MIN, PWM_MAX);
 
     // Write PWM values to ESCs
     lDriveESC.writeMicroseconds(leftPWM);
@@ -245,7 +281,7 @@ void setMode(int newMode) {
         Serial.println("Entered pairing mode");
         myCodeCell.LED(255, 0, 0);      // Red
         weaponIdleSpeed = WPN_OFF; // Change weapon state to off upon restart.
-        
+
         // Stop all motors
         lDriveESC.writeMicroseconds(PWM_MID);
         rDriveESC.writeMicroseconds(PWM_MID);
@@ -265,7 +301,7 @@ void setup() {
     Serial.println("Starting NimBLE Client");
     ctl.begin();
 
-    myCodeCell.Init(MOTION_GYRO);
+    myCodeCell.Init(MOTION_GYRO + MOTION_ROTATION);
     myCodeCell.LED(255, 255, 255);
 
     setMode(PAIRING_MODE);
@@ -286,12 +322,9 @@ void loop() {
             processGamepad();
 
             if (mode == COMBAT_MODE) {
-                // TODO: Break up into elevonMixing() and applyPWM()
                 elevonMixing();
                 applyPWM();
             } else if (mode == ASSISTED_COMBAT_MODE) {
-                // readSensors();
-                // TODO: Break up into elevonMixing() and applyPWM()
                 assistedMixing();
                 applyPWM();
             }
