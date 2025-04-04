@@ -77,12 +77,15 @@ float gyroX = 0.0;    // Unit: rad/s
 float gyroY = 0.0;    // Unit: rad/s
 float gyroZ = 0.0;    // Unit: rad/s, this is the one we are interested in for turning the robot
 
+
 Servo lDriveESC;
 Servo rDriveESC;
 Servo wpnESC;
 
 CodeCell myCodeCell;
 XboxSeriesXControllerESP32_asukiaaa::Core ctl;
+
+
 
 void dumpGamepad() {
     Serial.println("Address: " + ctl.buildDeviceAddressStr());
@@ -174,7 +177,7 @@ void applyPWM() {
     int rightPWM = map(mix_R, THROTTLE_MIN, THROTTLE_MAX, PWM_MIN, PWM_MAX);
     int weaponPWM = map(weaponSpeed, WPN_MIN, WPN_MAX, PWM_MIN, PWM_MAX);
 
-    // Contrain PWM values
+    // Constrain PWM values
     leftPWM = constrain(leftPWM, PWM_MIN, PWM_MAX);
     rightPWM = constrain(rightPWM, PWM_MIN, PWM_MAX);
     weaponPWM = constrain(weaponPWM, PWM_MIN, PWM_MAX);
@@ -223,7 +226,8 @@ void setMode(int newMode) {
     } else if (mode == PAIRING_MODE) {
         Serial.println("Entered pairing mode");
         myCodeCell.LED(255, 0, 0);      // Red
-
+        weaponIdleSpeed = WPN_OFF; // Change weapon state to off upon restart.
+        
         // Stop all motors
         lDriveESC.writeMicroseconds(PWM_MID);
         rDriveESC.writeMicroseconds(PWM_MID);
